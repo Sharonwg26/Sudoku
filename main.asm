@@ -1,21 +1,8 @@
-include Irvine32.inc
-include macros.inc
-BUFFER_SIZE=5000
+INCLUDE Irvine32.inc
+INCLUDE macros.inc
+BUFFER_SIZE = 9*11
 
 main  EQU start@0
-Cover PROTO
-ReadArray PROTO, arrayOffset:Dword, FileNameOffset:Dword
-CheckIndex PROTO, X:Byte, Y:Byte, val:Byte
-GetValue PROTO, val:Dword, X:Byte, Y:Byte 
-CheckAnswer PROTO, X:Byte, Y:Byte, val:Byte
-GetBoards PROTO, Diff: Byte ;Difficulty
-PrintArray PROTO, val1:Dword
-PrintSolvedArray PROTO, val1:Dword
-TakeInput PROTO
-GetDifficulty PROTO
-EditCell PROTO, X:Byte, Y:Byte, val:Byte
-IsEditable PROTO
-WriteBoardToFile PROTO, val1:Dword, val2:Dword
 .data
 
 ChStrs BYTE" *********                   *           *                   "
@@ -38,1075 +25,731 @@ xyPosition COORD <0,0>
 cellsWritten DWORD ?
 attributes0 WORD 10 DUP(0Ch),10 DUP(0Eh),10 DUP(0Ah),10 DUP(0Bh),10 DUP(0Dh),11 DUP(09h)
 
-board Byte 81 DUP(?)    
-solvedBoard Byte 81 DUP(?)	
-unSolvedBoard Byte 81 DUP(?)	
+; Arrays for loading boards 
+answer BYTE BUFFER_SIZE DUP(?) 
+question BYTE BUFFER_SIZE DUP(?)
+user_answer BYTE BUFFER_SIZE DUP(?)
+bool byte BUFFER_SIZE DUP(?)
 
-xCor Byte ?		;X and Y coordinates
-yCor Byte ?     
-num Byte 1		;input number
-difficulty Byte ?	;1 Easy, 2 Medium, 3 Hard
-
-wrongCounter Dword 0	;Game stats counters
-correctCounter Dword 0
-remainingCellsCount Byte ?
-
-lastGamechoose Byte ?		;Choose whether to go back to the last game
-
-
-fileName Byte "sudoku-boards/diff_?_?.txt",0		;Data files paths
-solvedFileName Byte "sudoku-boards/diff_?_?_solved.txt",0
-lastGameFile Byte "sudoku-boards/last_game/board.txt",0
-lastGameSolvedFile Byte "sudoku-boards/last_game/board_solved.txt",0
-lastGameUnsolvedFile Byte "sudoku-boards/last_game/board_unsolved.txt",0
-lastGameDetailsFile Byte "sudoku-boards/last_game/board_details.txt",0
-
-buffer Byte BUFFER_SIZE DUP(?)
 fileHandle HANDLE ?
+fileHandle2 HANDLE ?
 
-str1 BYTE "Cannot create file",0dh,0ah,0  
-newline byte 0Dh,0Ah
+; user game info 
+wrong byte 0 
+correct byte 0 
+bool_counter byte 0 
+cell byte ?
+rows dword 11
 
-;Helper variables for PrintArray procedure
-helpCounter Dword ?
-helpCounter2 Byte ?
+; Number of empty cells 
+empty_cells byte 0  
 
-startTime Dword ?
+; Suduko File Path
+easy1 byte "diff_1_1.txt",0
+easy1ans byte "diff_1_1_solved.txt",0
+easy2 byte "diff_1_2.txt",0
+easy2ans byte "diff_1_2_solved.txt",0
+easy3 byte "diff_1_3.txt",0
+easy3ans byte "diff_1_3_solved.txt",0
+
+normal1 byte "diff_2_1.txt",0
+normal1ans byte "diff_2_1_solved.txt",0
+normal2 byte "diff_2_2.txt",0
+normal2ans byte "diff_2_2_solved.txt",0
+normal3 byte "diff_2_3.txt",0
+normal3ans byte "diff_2_3_solved.txt",0
+
+hard1 byte "diff_3_1.txt",0  ;12
+hard1ans byte "diff_3_1_solved.txt",0 ;19
+hard2 byte "diff_3_2.txt",0
+hard2ans byte "diff_3_2_solved.txt",0
+hard3 byte "diff_3_3.txt",0
+hard3ans byte "diff_3_3_solved.txt",0
+
+; used file 
+question_temp byte 12 dup(?),0
+answer_temp byte 19 dup(?),0
+
+;time calc.
+startTime dword ?
+endtime dword ?
+millisecond dword ?
+seconds dword ?
+minutes dword ?
+hours dword ?
 beep byte 07h		;buzzer
 
 .code
-
-;------main-----------
-
 main PROC
 	call Cover
-	call crlf
-	call crlf
-	;Ask user to continue last played game
-	ASK:
-	mWrite "Do you want to continue the last game ?"
-	call crlf
-	mWrite "Enter Y if Yes or N if No"
-	call crlf
-	call ReadChar
-	call WriteChar
-	call crlf
-	cmp al,'Y'
-	je RunLastGame
-	jmp StartGame
+Start:
+	mWrite <"Choose difficulty :", 0dh, 0ah,"1 - Easy", 0dh, 0ah, "2 - Normal", 0dh, 0ah, "3 - Hard",0dh, 0ah, 0>
+	mov startTime,eax 
+	call Readint
+	cmp eax,1
+	je easy
+	cmp eax,2
+	je normal
+	cmp eax,3
+	je hard
 
-	;Loading last game boards from file
-	RunLastGame:
-	INVOKE GetTickCount
-	mov StartTime, eax
-		call LoadLastGame
-		jmp showBoard
+	jmp out_of_range
 
-	StartGame:
-	call GetDifficulty
-	INVOKE GetBoards, difficulty
-	INVOKE GetTickCount
-	mov StartTime, eax
-		jmp ShowBoard
+	easy:
+		call Randomize_Level 
+		cmp eax,1 
+		je Level_One_Easy 
+		cmp eax,2 
+		je Level_Two_Easy 
+		cmp eax,3 
+		je Level_Three_Easy 
 
-	GamePlay:
-		call TakeInput
-				
-		INVOKE EditCell, xCor, yCor, num 
-		call updateRemainingCellsCount
-		cmp remainingCellsCount, 0
-		je Finish
+	normal:
+		call Randomize_Level 
+		cmp eax,1 
+		je Level_One_Normal 
+		cmp eax,2 
+		je Level_Two_Normal
+		cmp eax,3 
+		je Level_Three_Normal 
 
-		call clrscr
-		PrintUpdatedBoard:
-		cmp eax,1
-		jne WrongAnswer
-			mov eax,2    ;Set to Green Color
-			call SetTextColor
-			mWrite "Correct !"
-			inc correctCounter
-			mov eax,15    ;Set Color Back to white
-			call SetTextColor
-			call crlf
-			jmp ShowBoard
-		WrongAnswer:
-			mov eax,4    ;Set to Red Color
-			call SetTextColor
-			mWrite "Wrong Input !  กรกsกร  กรกsกร  กรกsกร "
-			inc WrongCounter
-			mov eax,15    ;Set Color Back to white
-			call SetTextColor
-			call crlf
+	hard:
+		call Randomize_Level 
+		cmp eax , 1 
+		je Level_One_Hard 
+		cmp eax , 2 
+		je Level_Two_Hard 
+		cmp eax , 3 
+		je Level_Three_Hard 
 
-		ShowBoard:
-		INVOKE PrintArray, offset Board
+	Level_One_Easy:
+		mov edx ,OFFSET  easy1
+		call Set_Question_Temp
+		mov edx , OFFSET  easy1ans
+		call Set_Answer_Temp
+		jmp done
 
-		ShowOptions:
-		mWrite "Press A to add a new cell"
-		call crlf
-		mWrite "Press C to reset the current board"
-		call crlf
-		mWrite "Press S to print the solved board"
-		call crlf
-		mWrite "Press E to exit and save current board"
-		call crlf
-		call ReadChar
-		call WriteChar
-		call crlf
-		
-		GetChoice:
-		cmp ax,1E41h
-		je GamePlay
-		cmp ax,1245h
-		je SaveBoard
-		cmp ax,2E43h
-		je ResetBoard
-		cmp ax,1F53h
-		je PrintSolvedBoard
+	Level_Two_Easy:
+		mov edx ,OFFSET  easy2
+		call Set_Question_Temp
+		mov edx , OFFSET  easy2ans
+		call Set_Answer_Temp
+		jmp done
 
-		mWrite "Enter a valid choice!"
-		jmp ShowBoard
+	Level_Three_Easy:
+		mov edx , OFFSET  easy3
+		call Set_Question_Temp
+		mov edx , OFFSET  easy3ans
+		call Set_Answer_Temp
+		jmp done
 
-		;Saving current board if user choses exit
-		SaveBoard:
-			INVOKE GetTickCount
-			SUB eax, startTime
+	Level_One_Normal:
+		mov edx , OFFSET  normal1
+		call Set_Question_Temp
+		mov edx , OFFSET  normal1ans
+		call Set_Answer_Temp
+		jmp done
 
-			mWrite <"Time Taken: ">
-			call writedec
-			call crlf
-			mWrite "Number of Remaining cells: "
-			call UpdateRemainingCellsCount
-			movZX eax,remainingCellsCount
-			call writedec
+	Level_Two_Normal:
+		mov edx , OFFSET  normal2
+		call Set_Question_Temp
+		mov edx , OFFSET  normal2ans
+		call Set_Answer_Temp
+		jmp done 
 
-			;Saving boards in data files
-			INVOKE WriteBoardToFile, offset board, offset lastGameFile
-			INVOKE WriteBoardToFile, offset solvedBoard, offset lastGameSolvedFile
+	Level_Three_Normal:
+		mov edx , OFFSET  normal3
+		call Set_Question_Temp
+		mov edx , OFFSET  normal3ans
+		call Set_Answer_Temp
+		jmp done
 
-			;Prevent calling dummy file if the game is a continued game
-			cmp lastGamechoose, 1
-			je SkipLoading
+	Level_One_Hard:
+		mov edx , OFFSET  hard1
+		call Set_Question_Temp
+		mov edx , OFFSET  hard1ans
+		call Set_Answer_Temp
+		jmp done
 
-			;Restoring unsolved board from data file
-			INVOKE ReadArray, offset board, offset fileName
-			INVOKE WriteBoardToFile, offset board, offset lastGameUnsolvedFile
+	Level_Two_Hard:
+		mov edx , OFFSET  hard2
+		call Set_Question_Temp
+		mov edx , OFFSET  hard2ans
+		call Set_Answer_Temp
+		jmp done
 
-			SkipLoading:
-			call crlf
-			mWrite " ** Your Board was saved succssfully ! **"
-			call crlf
-			mWrite " ** Thanks for Playing **"
-			call crlf
-			call crlf
-			exit
+	Level_Three_Hard:
+		mov edx , OFFSET  hard3
+		call Set_Question_Temp
+		mov edx , OFFSET  hard3ans
+		call Set_Answer_Temp
 
-		;Rreset current board to initial state
-		ResetBoard:
-			cmp lastGamechoose,1
-			je ResetLastGame
+	done:
+		call Set_Arrays
+		call Options
+		jmp quit 
 
-			;call ReadArray with required params to populate board var
-			INVOKE ReadArray, offset board, offset filename
-			jmp ResetSuccessful
+	out_of_range:
+		mWrite < "Number Out Of Range ", 0dh, 0ah>
+		jmp Start 
 
-			ResetLastGame:
-			;call ReadArray with required params to populate board
-			INVOKE ReadArray, offset board, offset lastGameUnsolvedFile
-
-			ResetSuccessful:
-				call clrscr
-				mWrite "Your Game Was Reset!"
-				call crlf
-				jmp ShowBoard
-
-
-		PrintSolvedBoard:
-			INVOKE PrintSolvedArray, offset solvedBoard
-
-			INVOKE GetTickCount
-			SUB eax, startTime
-
-			call crlf
-			mWrite <"Time Taken: ">
-			call writedec
-			call crlf
-			mWrite "Number of Remaining cells: "
-			call UpdateRemainingCellsCount
-			movzx eax,remainingCellsCount
-			call writedec
-			call crlf
-			call crlf
-			mWrite "Number of Incorrect Solutions: "
-			mov eax,wrongCounter
-			call writedec
-			call crlf
-			mWrite "Number of Correct Solutions: "
-			mov eax,correctCounter
-			call writedec
-			call crlf
-			mWrite " ** Thanks for Playing **"
-			call crlf
-
-			exit
-
-	Finish:
-		inc correctCounter	;Count last correct submission
-
-		call clrscr
-		mWrite "Congratulations You have Finished the board !"
-		call crlf
-		INVOKE GetTickCount
-			SUB eax, startTime
-
-			mWrite <"Time Taken: ">
-			call writedec
-			call crlf
-			mWrite "Number of Incorrect Solutions: "
-			mov eax,wrongCounter
-			call writedec
-			call crlf
-			mWrite "Number of Correct Solutions: "
-			mov eax,correctCounter
-			call writedec
-			call crlf
-
-				mWrite " ** Thanks You for Playing **"
-			call crlf
-
+	quit:
+		call time_calculations
 	exit
 main ENDP
-
 
 ;----------------------Cover-----------------------------
 change PROC
     mov edx,0
     push ecx
     mov ecx,61
-L2:
-    movzx eax,ChStrs[esi]
-    call WriteChar
-    inc esi
-    inc edx
-    loop L2
-    call Crlf
-    pop ecx
-        RET
+
+	L1:
+		movzx eax,ChStrs[esi]
+		call WriteChar
+		inc esi
+		inc edx
+		loop L1
+		call Crlf
+		pop ecx
+	ret
 change ENDP
 
 Cover PROC
-INVOKE GetStdHandle, STD_OUTPUT_HANDLE ; Get the console ouput handle
+	INVOKE GetStdHandle, STD_OUTPUT_HANDLE ; Get the console ouput handle
     mov outputHandle, eax ; save console handle
     call Clrscr
     mov ecx,13
     mov esi,0
-L1:
 
-    call change
-      LOOP L1
-    mov ecx,13
-L2:
-    push ecx
-    INVOKE WriteConsoleOutputAttribute,
-      outputHandle,
-      ADDR attributes0,
-      61,
-      xyPosition,
-      ADDR cellsWritten
-      inc xyPosition.y
-      pop ecx
-      loop L2
+	L1:
+		call change
+		LOOP L1
+		mov ecx,13
+	L2:
+		push ecx
+		INVOKE WriteConsoleOutputAttribute,
+		outputHandle,
+		ADDR attributes0,
+		 61,
+		xyPosition,
+		ADDR cellsWritten
+		inc xyPosition.y
+		pop ecx
+		loop L2
 Cover ENDP
 
-;----------------------Read Array-----------------------------
-;Read file number
-ReadArray PROC, arrayOffset:Dword, FileNameOffset:Dword
-	mov esi, arrayOffset
-	mov ebx, FileNameOffset
-	mov ecx,34
-	
-	mov edx,ebx		;Open the file
-	call OpenInputFile
-	mov fileHandle, eax
+;----------------------Randomize Level-----------------------------
+Randomize_Level PROC
+	mov  eax,3    ; random number from 0 to 2 
+	call Randomize  ;re-seed generator
+	call RandomRange ; set eax to the random number
+	inc  eax        ; make the number in range from 1 to 3  
+ret
+Randomize_Level ENDP
 
-	cmp eax, INValID_HANDLE_ValUE	;Check
-	jne FileOk	
-	mWrite <"Cannot open file", 0dh, 0ah>
-	jmp quit
+;----------------------Options-----------------------------
+Options PROC
+	mov edx , offset user_answer
+	call DisplayAnswer
+	mWrite "Press A to add a new cell"
+	call crlf
+	mWrite "Press C to reset the current board"
+	call crlf
+	mWrite "Press S to print the solved board"
+	call crlf
+	call ReadChar
+	call WriteChar
+	call crlf
 
-	FileOk :
-		mov edx, OFFSET buffer
-		mov ecx, BUFFER_SIZE
-		call ReadFromFile
-		JNC CheckBufferSize	
-		mWrite "Error reading file. "	
-		call WriteWindowsMsg
-		jmp CloseFilee
+	cmp ax,1E41h
+	je Edit
+	cmp ax,2E43h
+	je Clear
+	cmp ax,1F53h
+	je Solve
 
-	CheckBufferSize:
-		cmp eax, BUFFER_SIZE	
-		jb BufferSizeOk
-		mWrite <"Error: Buffer too small for the file", 0dh, 0ah>
-		jmp quit
+out_of_range2:
+	mWrite<" Number Out Of Range ", 0dh, 0ah>
+	jmp Options
+ret
+Options ENDP
 
-BufferSizeOk :
-	mov buffer[eax], 0
-	mov ebx, OFFSET buffer
-	mov ecx, 97
-	mov edx,esi
+;----------------------Edit-----------------------------
+Edit PROC
+	mWrite<"Enter the x coordinate : ">
+	call Readint
+	dec eax
+	cmp eax,8
+	ja out_of_range3
+	cmp eax,0
+	jb out_of_range3
+	mul rows
+	mov ebx,eax
 
-	StoreContentInTheArray :
-		  mov al, [ebx]
-		  inc ebx
-		  cmp al, 13
-		  je SkipBecOfEndl
-		  cmp al, 10
-		  je SkipBecOfEndl
-		  mov [esi], al
-		  inc esi
-		 SkipBecOfEndl : 
-	loop StoreContentInTheArray
+	mWrite<"Enter the y coordinate : ">
+	call readint
+	dec eax
+	cmp eax,8
+	ja out_of_range3
+	cmp eax,0
+	jb out_of_range3
+	call CheckNumber
+	add ebx,eax
 
+	cmp bool[ebx] , 70
+	je check
 
-	mov esi, edx
-	mov ecx, 81
-   ConvertFromCharToInt:
-		  sub byte ptr[esi],48
-	      inc esi 
-	loop ConvertFromCharToInt
-	
-	 mov esi, edx
+	mov eax,red
+	call settextcolor
+	mWrite<"The cell is already assigned">
+	call White1	
+	jmp next
 
-CloseFilee :
-	mov eax, fileHandle
-	call CloseFile
+check:
+	mWrite<"Enter number  : ">
+	call readint
+	cmp eax,9
+	ja out_of_range3
+	cmp eax,0
+	jb out_of_range3
+	call crlf
+	add al , 48 
+	mov dl, al
 
-	quit :
-	ret
-ReadArray ENDP
+	mov al, answer[ebx]
+	cmp dl, al
+	je fine
+	call Red1
+	inc wrong 
+	jmp next
 
-;----------------------CheckIndex----------------------------
-CheckIndex PROC, X:Byte, Y:Byte, val:Byte
-	
-	push eax
-	
-	mov al, X
-	mov xCor, al
-	mov al, Y
-	mov yCor, al
-	mov al, val
-	mov num, al
-	
-	pop eax
-	
-	cmp xCor,9		;Check x lies between 1 and 9
-	ja WRONG
-	cmp xCor,1
-	jb WRONG
-
-
-	cmp YCor,9		;Check y lies between 1 and 9
-	ja WRONG
-	cmp YCor,1
-	jb WRONG
-
-	
-	cmp num,9		;Check num lies between 1 and 9
-	ja WRONG
-	cmp num,1
-	jb WRONG
-
-	jmp RIGHT
-
-	WRONG:
-		mov eax,0
-		ret
-	RIGHT:
-		mov eax,1
-		ret
-CheckIndex ENDP
-
-;----------------------GetValue------------------------------
-GetValue PROC, val:Dword, X:Byte, Y:Byte 
-	push ecx
-	push edx
-	push eax
-
-	mov edx, val
-	mov al, X
-	mov xCor, al
-	mov al, Y
-	mov yCor, al
-
-	pop eax
-
-	INVOKE CheckIndex, X, Y, num 
-	push ecx
-	push edx
-	cmp eax, 1
-	je Body
-		mov eax, -1
-		pop edx
-		pop ecx
-		ret
-	Body:
-		DEC xCor
-		DEC yCor
-		mov eax, 9
-		movZX ecx, xCor
-		Mul ecx
-		movZX ecx, yCor
-		add eax, ecx
-		pop edx
-		push edx
-		add edx, eax
-		mov eax, 0
-		mov al, [edx]
-		inc xCor
-		inc yCor
-		pop ecx
-		pop edx
-		pop edx
-		pop ecx
-	ret
-GetValue ENDP
-
-;----------------------CheckAnswer---------------------------
-CheckAnswer PROC, X:Byte, Y:Byte, val:Byte
-
-	push eax
-	mov al, X
-	mov xCor, al
-	mov al, Y
-	mov yCor, al
-	mov al, val
-	mov num, al
-
-	pop eax
-	
-	INVOKE GetValue, offset solvedBoard, X, Y
-
-	mov bl,num		;moving the value to check to bl
-	cmp bl,al		;Comparing the given value with the answer
-	je RIGHT
-	jmp WRONG
-
-	RIGHT:
-	mov eax,1
-	ret
-
-	WRONG:
+fine:
+	call Green1
+	mov user_answer[ebx] , dl
+	mov bool[ebx] , 'M'
+	inc correct
 	mov al,beep
 	call writechar
 	mov eax,0
 	
-	ret
-CheckAnswer ENDP
-
-;----------------------GetBoards----------------------------
-GetBoards PROC, Diff: Byte ;Difficulty
-	push eax
-	mov al, Diff
-	mov Difficulty, al
-
-	pop eax
-
-	xor ax,cx
-
-	mov dx,0
-	mov bx,4
-	div bx
-
-	cmp dx,0	;Setting value to 1 if it's 0
-	je ZeroDX
-	jmp cont
-
-	ZeroDX:
-	mov dx,1
-
-	cont:
-	mov al,dl
-	add al,'0'
-	mov fileName[21],al
-
-	mov al,difficulty
-	add al,'0'
-	mov fileName[19],al
-
-	mov al,dl
-	add al,'0'
-	mov solvedFileName[21],al
-
-	mov al,difficulty
-	add al,'0'
-	mov solvedFileName[19],al
-
-	INVOKE ReadArray, offset board, offset fileName
-	INVOKE ReadArray, offset unSolvedBoard, offset fileName
-	INVOKE ReadArray, offset solvedBoard, offset solvedFileName
-
-	ret
-GetBoards ENDP
-
-;----------------------Print Array----------------------------
-PrintArray PROC, val1:Dword
-	mov xCor,0
-	mov yCor,1
-
-	mov helpCounter,1
-	mov helpCounter2,1
-	mov edx, val1
-
+next:
 	call crlf
-	mov al,' '
-	call writechar
-	call writechar
-	call writechar
-	call writechar
-	mov eax,1
+	mov al,correct
+	cmp al,empty_cells
+	je succedd
+	jmp options
+
+out_of_range3:
+	mwrite< " Number Out Of Range. Please Re-input them.">
+	jmp options 
+	
+succedd:
+	mov edx , offset user_answer
+	call DisplayAnswer
+	mwrite< "Suduko is solved  ">
+	call crlf
+	mwrite< "Correct Guessing : ">
+	mov al , correct
+	call writedec
+	call crlf 
+	mwrite< "Wrong Guessing : ">
+	mov al , wrong
+	call writedec
+	call crlf
+ret
+Edit ENDP
+
+;----------------------Check Number-----------------------------
+CheckNumber PROC
+	cmp eax,8
+	ja wronno 
+	cmp eax,0 
+	jb wronno 
+	jmp proceed
+
+wronno:
+	 mwrite< " Number Out Of Range. Please Re-input them.">
+	 jmp options
+proceed:
+ret
+CheckNumber ENDP
+
+;----------------------Clear Number-----------------------------
+Clear PROC
+	call OpenQue
+	mov edx,OFFSET user_answer
+	call LoadQuestion
+	mov wrong,0 
+	mov correct,0 
+	call Options
+ret
+Clear ENDP
+
+;----------------------Solve Number-----------------------------
+Solve PROC
+	call DisplaySolution
+	call WaitMsg
+ret
+Solve ENDP
+
+;----------------------Set Arrays-----------------------------
+Set_Arrays PROC
+	call OpenQue
+	mov edx,OFFSET question
+	call LoadQuestion
+
+	call OpenQue
+	mov edx,OFFSET user_answer
+	call LoadQuestion	
+	call SetBool
+
+	call OpenAnsw
+	mov edx,OFFSET answer
+	call LoadAnswer
+ret
+Set_Arrays ENDP
+
+;---------------------- Set Question Top----------------------------
+Set_Question_Temp PROC
+	mov ecx,12
+	mov ebx,OFFSET  question_temp
+L1:
+	mov al,[edx]
+	mov [ebx],al 
+	inc edx 
+	inc ebx 
+	loop L1
+ret
+Set_Question_Temp ENDP
+
+;---------------------- Set Answer Top----------------------------
+Set_Answer_Temp PROC
+	mov ecx , 19
+	mov ebx,OFFSET  answer_temp
+L1:
+	mov al,[edx]
+	mov [ebx],al 
+	inc edx 
+	inc ebx 
+	loop L1
+ret
+Set_Answer_Temp ENDP
+
+;---------------------- Print Answer----------------------------
+DisplayAnswer PROC
+	call crlf
+	mov ecx,9
+	mov ebx,1
+	mWrite<" |">
+
+top_border:
+	call Blue1
+	mov eax,ebx
+	call writedec
+	call White1
+	mWrite<" ">
+	inc ebx
+	LOOP top_border
+	call crlf
+	mWrite<"--">
 	mov ecx,9
 
-	topNumbers:	
-		call writedec
-		push eax
-		mov al,' '
-		call writechar
-		call writechar
-		
-		pop eax
-		inc eax
-	loop topNumbers
-	
-	push edx
-	mov ecx,81
-	L1:
-		mov eax,0
-		movzx eax,byte ptr [edx]	;eax contains current number
-		push eax
-		push edx
-
-		mov dx,0
-		mov ax,cx     ;DX = CX % 9
- 		mov bx,9
-		div bx
-
-		cmp dx,0
-		jne NoEndl	  ;if DX % 9 = 0 print endl
-		inc xCor
-		mov yCor,1
-		call crlf
-		mov al,' ' 
-		call writechar
-		call writechar
-		call writechar
-		mov al,'|' 
-		call writechar
-		
-		push ecx
-		mov edi,ecx
-		mov ecx,9
-
-		dashes:
-			mov al,196	 ;horizontal line(-)
-			cmp edi,81
-			jne process
-			push ecx
-			mov ecx,3
-			mov al,196
-		
-		horiDashes:
-			call writechar
-			loop horiDashes
-			pop ecx
-			jmp endloop
-
-		process:
-			cmp edi,54
-			je Print
-			cmp edi,27
-			je Print
-			cmp edi,0
-			mov al,' '
-		
-		Print:
-			call writechar
-			cmp ecx,1
-			jne Nobar
-			mov al,196
-		
-		Nobar:
-			cmp ecx,1
-			jne yarab
-			mov al,' '				;leave
-		
-		yarab:
-			call writechar
-			cmp ecx,7
-			je draw
-			cmp ecx,1
-			je draw
-			cmp ecx,4
-			jne skip
-		draw:
-			mov al,'|'
-		skip:
-			call writechar
-		endloop:
-		loop dashes
-		pop ecx
-	
-		call crlf
-		mov al,' '
-		call writechar
-		mov al,helpCounter2
-		call writedec
-		mov al,' '
-		call writechar
-		inc helpcounter2
-		mov al,'|'
-		call writechar
-
-		NoEndl:
-			pop edx
-			pop eax
-			push eax
-	cmp eax,0
-	je NoRed	;dont Color 0s with red
-
-	INVOKE GetValue, offset unsolvedBoard,xCor,yCor
-	cmp eax,0
-	jne NoRed
-
-	mov eax,4 ;red color
-	call SetTextColor
-
-	NoRed:
-		pop eax
-		call writeDec
-		mov eax,15
-		call SetTextColor
-		inc yCor
-		mov al,' '
-		call writechar
-		
-		mov al, ' '
-		cmp helpCounter,3
-		jne Print2
-		mov al,'|'
-		mov helpCounter,0
-	Print2:
-		call writechar
-		inc edx
-		inc helpCounter
-		
-		dec cx
-		jne L1  
+top_border2:
+	mWrite<"--">
+	LOOP top_border2
 	call crlf
-	mov al,' '
-	call writechar
-	call writechar
-	call writechar
-	mov ecx,27
-	mov al,196
-	BottomDashes:
-	call writechar
-	loop BottomDashes
-	mov al,'|'
-	call writechar
-	call crlf
-	mov al,' '
-	call writechar
-	pop edx
-	ret
-PrintArray ENDP
-
-;----------------------PrintSolvedArray----------------------------
-PrintSolvedArray PROC, val1:Dword
-	mov xCor,0
-	mov yCor,1
-
-	mov helpCounter,1
-	mov helpCounter2,1
-	mov edx, val1
-
-	call crlf
-	mov al,' '
-	call writechar
-	call writechar
-	call writechar
-	call writechar
-	mov eax,1
+	mov ebp,1
 	mov ecx,9
 
-	topNumbers:	
-		call writedec
-		push eax
-		mov al,' '
-		call writechar
-		call writechar
-		
-		pop eax
-		inc eax
-	loop topNumbers
+L1:
+	call Blue1
+	mov eax,ebp
+	call writedec
+	call White1
+	mWrite<"|">
+	inc ebp
+	mov edi , ecx
+	mov ecx , 11
+
+L2:
+	mov eax , 0
+	movzx esi , bool_counter
+	cmp bool[esi] , 70
+	je set_zero 
+	cmp bool[esi] , 77
+	je set_color
+	jne con
+
+set_color:
+	mov eax , green
+	call settextcolor
+	jmp con 
+
+set_zero :
+	mov eax , yellow
+	call settextcolor
 	
-	push edx
-	mov ecx,81
-	L1:
-		mov eax,0
-		movzx eax,byte ptr [edx]	;eax contains current number
-		push eax
-		push edx
+con:
+	inc bool_counter
+	cmp ecx , 2 
+	jle normal 
+	mov al , [edx]
+	call writechar
+	mov bl , al 
+	call White1
+	mov al , bl
 
-		mov dx,0
-		mov ax,cx     ;DX = CX % 9
- 		mov bx,9
-		div bx
+	cmp ecx, 9
+	je aywa
+	cmp ecx, 6
+	je aywa 
+	mwrite< " ">
+	jmp normal
 
-		cmp dx,0
-		jne NoEndl	  ;if DX % 9 = 0 print endl
-		inc xCor
-		mov yCor,1
-		call crlf
-		mov al,' ' 
-		call writechar
-		call writechar
-		call writechar
-		mov al,'|' 
-		call writechar
-		
-		push ecx
-		mov edi,ecx
-		mov ecx,9
+aywa: 
+	mwrite< "|">
 
-		dashes:
-			mov al,196	 ;horizontal line(-)
-			cmp edi,81
-			jne process
-			push ecx
-			mov ecx,3
-			mov al,196
-		
-		horiDashes:
-			call writechar
-			loop horiDashes
-			pop ecx
-			jmp endloop
-
-		process:
-			cmp edi,54
-			je Print
-			cmp edi,27
-			je Print
-			cmp edi,0
-			mov al,' '
-		
-		Print:
-			call writechar
-			cmp ecx,1
-			jne Nobar
-			mov al,196
-		
-		Nobar:
-			cmp ecx,1
-			jne yarab
-			mov al,' '				;leave
-		
-		yarab:
-			call writechar
-			cmp ecx,7
-			je draw
-			cmp ecx,1
-			je draw
-			cmp ecx,4
-			jne skip
-		draw:
-			mov al,'|'
-		skip:
-			call writechar
-		endloop:
-		loop dashes
-		pop ecx
+normal:
+	inc edx 
+	loop L2
 	
-		call crlf
-		mov al,' '
-		call writechar
-		mov al,helpCounter2
-		call writedec
-		mov al,' '
-		call writechar
-		inc helpcounter2
-		mov al,'|'
-		call writechar
+	mov ecx , edi
+	dec ecx 
+	call crlf
+	cmp ecx, 6
+	je aywa2
+	cmp ecx, 3
+	je aywa2
+	jmp la2a
 
-		NoEndl:
-			pop edx
-			pop eax
-			push eax
+aywa2:
+	mwrite<"--------------------",0dh, 0ah>
 
-	INVOKE GetValue, offset board, xCor, yCor
+la2a:
+	cmp ecx, 0
+	jne L1
+	mov bool_counter , 0 
+
+ret
+DisplayAnswer ENDP
+
+;---------------------- Print Solution----------------------------
+DisplaySolution PROC
+	call crlf
+	mov ecx,9
+	mov ebx,1
+	mWrite<" |">
+
+top_border:
+	call Blue1
+	mov eax,ebx
+	call writedec
+	call White1
+	mWrite<" ">
+	inc ebx
+	LOOP top_border
+	call crlf
+	mWrite<"--">
+	mov ecx,9
+
+top_border2:
+	mWrite<"--">
+	LOOP top_border2
+	call crlf
+	mov edx,OFFSET answer
+	mov ecx,9
+	mov ebp,1
+L1:
+	call Blue1
+	mov eax,ebp
+	call writedec
+	call White1
+	mWrite<"|">
+	inc ebp
+	mov edi , ecx
+	mov ecx , 11  
+L2:
+	mov eax , 0 			
+	cmp ecx , 2 
+	jle normal 
+	mov al , [edx]
+	call writechar
+	cmp ecx, 9
+	je aywa
+	cmp ecx, 6
+	je aywa 
+	mwrite< " ">
+	jmp normal
+
+aywa: 
+	mwrite< "|">
+
+normal:
+	inc edx 
+	loop L2
+	mov ecx , edi 
+	call crlf
+	cmp ecx, 7
+	je aywa2
+	cmp ecx, 4
+	je aywa2
+	jmp la2a
+
+aywa2:
+	mwrite<"--------------------",0dh, 0ah>
+
+la2a:
+	loop L1	 
+	call crlf
+ret
+DisplaySolution ENDP
+
+;---------------------- Open Question----------------------------
+OpenQue PROC
+	mov edx,OFFSET question_temp
+	call OpenInputFile
+ret
+OpenQue ENDP
+
+;---------------------- Read Question----------------------------
+LoadQuestion PROC
+	mov fileHandle,eax	
+	mov ecx,buffer_size
+	call ReadFromFile
+	mov eax,fileHandle
+	call CloseFile
+ret
+LoadQuestion ENDP
+
+;---------------------- Open Answer----------------------------
+OpenAnsw PROC
+	mov edx,OFFSET answer_temp
+	call OpenInputFile
+ret
+OpenAnsw  ENDP
+
+;---------------------- Read Answer----------------------------
+LoadAnswer PROC
+	mov fileHandle2,eax	
+	mov ecx,buffer_size
+	call ReadFromFile
+	mov eax,fileHandle2
+	call CloseFile
+ret
+LoadAnswer ENDP
+
+;---------------------- Set Out Color----------------------------
+;------White-----(Initial)
+White1 PROC
+	mov eax , white
+	call settextcolor
+ret
+White1 ENDP
+
+;------Blue-----()
+Blue1 PROC
+	mov eax,Cyan
+	call settextcolor
+ret
+Blue1 ENDP
+
+;------Red-----(Wrong)
+Red1 PROC
+	mov eax , red
+	call settextcolor
+	mWrite<"Wrong number (กรกsกร) (กรกsกร) (กรกsกร)", 0dh, 0ah>		
+	mov eax , white
+	call settextcolor
+ret
+Red1 ENDP
+
+;------Green-----(Correct)
+Green1 PROC
+	mov eax , green
+	call settextcolor
+	mWrite<"Correct number", 0dh, 0ah>		
+	mov eax , white
+	call settextcolor
+ret
+Green1 ENDP
+
+;---------------------- Set Boolean function----------------------------
+SetBool PROC
+	mov edx , offset bool
+	mov ebx , offset question
+	mov ecx,9
+L1:
+	mov edi , ecx
+	mov ecx , 11  
+	
+L2:
+	mov al,[ebx]
+	sub al,48          ;from ascii to number 
+	cmp al,0
+	je set_to_false
+	jne set_to_true
+
+set_to_false:
+	mov esi,'F'
+	mov [edx],esi 
+	inc empty_cells
+	jmp ok
+
+set_to_true:
+	mov esi,'T'
+	mov [edx],esi
+	
+ok:
+	inc edx 
+	inc ebx
+	loop L2
+	mov ecx , edi 
+	loop L1
+ret
+SetBool ENDP
+
+;---------------------- Time conversion----------------------------
+Time_calculations PROC
+    mov ebx,startTime
+	sub eax,ebx
+	mov ebx,1000
+	mov edx,0
+	div ebx
+	mov millisecond,edx
+
 	cmp eax,0
-	jne NoBlue
-	mov eax,14
-	call SetTextColor
-	NoBlue:
-		pop eax
-		call writeDec
-		mov eax,15
-		call SetTextColor
-
-		inc yCor
-		mov al,' '
-		call writechar
-		
-		mov al, ' '
-		cmp helpCounter,3
-		jne Print2
-		mov al,'|'
-		mov helpCounter,0
-		Print2:
-		call writechar
-		inc edx
-		inc helpCounter
-		
-		dec cx
-		jne L1  ;because of loop causes too far error
-
-	call crlf
-	mov al,' '
-	call writechar
-	call writechar
-	call writechar
-	mov ecx,27
-	mov al,196
-	BottomDashes:
-	call writechar
-	loop BottomDashes
-	mov al,'|'
-	call writechar
-	call crlf
-	mov al,' '
-	call writechar
-	pop edx
-	ret
-PrintSolvedArray ENDP
-
-
-;----------------------TakeInput-----------------------------
-TakeInput PROC
-
-	again:
-	mWrite "Enter the x coordinate :  " 
-	call ReadDec
-	mov xCor,al
-	mWrite "Enter the y coordinate :  " 
-	call ReadDec
-	mov yCor,al
-	mWrite "Enter the number :  " 
-	call ReadDec
-	mov num,al
-
-	INVOKE checkindex, xCor, yCor, num
-	cmp eax ,1
 	je done
+	mov edx,0
+	mov ebx,60
+	div ebx
+	mov seconds,edx
+	cmp eax,0
+	je done
+	mov edx,0
+	div ebx
+	mov minutes,edx
+	cmp eax,0
+	je done
+	mov edx,0
+	div ebx
+	mov hours,edx
 
-	mWrite "There is an error in your input values... Please Re-input them. " 
+done:
+	mwrite<' Your Time : '>
+	mov eax,hours
+	call writedec
+	mwrite<':'>
+	mov eax,minutes
+	call writedec
+	mwrite<':'>
+	mov eax,seconds
+	call writedec
+	mwrite<'.'>
+	mov eax,millisecond
+	call writedec
 	call crlf
-	jmp again
 
-	done:
-	call iseditable
-	cmp eax,1
-	je Editable
-	mWrite "You Cannot edit this place, Please change it."
-	call crlf
-	jmp again
-	Editable:
-	mWrite "Edited"
-	call crlf
-	ret
-TakeInput ENDP
-
-;----------------------GetDifficulty-------------------------
-GetDifficulty PROC
-	again:
-	mWrite "Please Enter the difficulty: "
-	
-	call ReadDec
-	cmp al,1	;Checks if the difficulty is 1 or 2 or 3
-	je NoError
-	cmp al,2
-	je NoError
-	cmp al,3
-	je NoError
-
-	mWrite "Please enter a valid difficulty ( 1 or 2 or 3 ) "
-	call crlf
-	jmp again	;Re Enter difficulty if it was wrong
-
-	NoError:
-	mov difficulty,al	;take the byte from eax which will be 1 or 2 or 3
-	ret
-GetDifficulty ENDP
-
-;----------------------EditCell------------------------------
-EditCell PROC, X:Byte, Y:Byte, val:Byte
-
-	push eax
-	mov al, X
-	mov xCor, al
-	mov al, Y
-	mov yCor, al
-	mov al, val
-	mov num, al
-
-	pop eax
-	push edx
-	push ecx
-	cmp eax, 0
-	je Ending
-		INVOKE CheckAnswer, X,Y, val
-		cmp eax, 0
-	je Ending
-		DEC xCor
-		DEC yCor
-		mov eax, 9
-		movZX ecx, xCor
-		Mul ecx
-		movZX ecx, yCor
-		add eax, ecx
-		mov edx, offset board
-		add edx, eax
-		mov al, num
-		mov [edx], al
-		inc xCor
-		inc yCor
-		DEC remainingCellsCount
-		mov eax,1
-		pop ecx
-		pop edx
-		ret
-	Ending:
-		pop ecx
-		pop edx
-		mov eax,0
-		ret
-EditCell ENDP
-
-;----------------------IsEditable----------------------------
-IsEditable PROC
-	INVOKE GetValue, offset board, xCor, yCor
-	cmp eax,0	;Checking value returned from GetValue
-	je RIGHT
-	jmp WRONG
-
-	RIGHT:
-	mov eax,1
-	jmp SKIP
-
-	WRONG:
-	mov eax,0
-
-	SKIP:
-	ret
-IsEditable ENDP
-
-;----------------UpdateRemainingCellsCount------------------
-UpdateRemainingCellsCount PROC
-	push edx
-	push ecx
-	push eax
-
-	mov remainingCellsCount, 0
-	mov edx, offset Board
-	mov ecx, 81
-	L1:
-		mov al, [edx]
-		cmp al, 0
-		jne skip
-			inc remainingCellsCount
-		skip:
-			inc edx
-	Loop L1
-
-	pop eax
-	pop ecx
-	pop edx
-	ret
-UpdateRemainingCellsCount ENDP
-
-;----------------------LoadLastGame--------------------------
-LoadLastGame PROC
-	INVOKE ReadArray, offset board, offset lastGameFile
-	INVOKE ReadArray, offset solvedBoard, offset lastGameSolvedFile
-	INVOKE ReadArray, offset unSolvedBoard, offset lastGameUnSolvedFile
-	mov lastGamechoose,1
-	ret
-LoadLastGame ENDP
-
-;-------------------WriteBoardToFile-------------------------
-WriteBoardToFile PROC, val1:Dword, val2:Dword
-
-	push eax
-	mov edx, val1
-	mov ebx, val2
-	pop eax
-
-	push edx
-	 mov ecx,81
-	 loo:
-		 mov eax,48
-		 add [edx],al
-		 inc edx
-	 LOOP loo
-
-	; Create a new text file and error check.
-	 mov edx,ebx	;Move file name offset to edx for CreatOutputFile
-	 call CreateOutputFile
-	 mov fileHandle,eax
-
-	 cmp eax, INValID_HANDLE_ValUE 
-	 jne file_ok	; no: skip
-	 mov edx,OFFSET str1
-	 call WriteString
-	 jmp quit 
-	 file_ok:  
-
-   pop edx		;address of the array to be typed
-   mov ecx,81	;Length of array
-
-   l5:
-	   mov eax,fileHandle
-	   push edx		 ;push current character address
-	   push ecx		 ;push the loop iterator
-	   mov ecx,1
-	   call WriteToFile
-	   pop ecx
-
-	   ;check if a new line should be printed or not
-			mov DX,0
-			DEC ecx
-			mov AX,CX     ;DX = CX-1 % 9
- 			mov BX,9
-			DIV BX
-
-			cmp DX,0 	; if not DIV by 9 , then no newline required.
-			jne noEndl
-
-			push ecx
-			 mov eax,fileHandle
-			 mov ecx,lengthof newline
-			 mov edx,offset newline
-			 call WriteToFile
-			pop ecx
-	
-		noEndl:
-	   inc ecx  ;as it was decremented above for calculating modulus
-	   pop edx  ;return the address of the read char
-	   inc edx  ;staging for writing next char
-   loop l5
-
-   quit:
-	ret
-WriteBoardToFile ENDP
-
+ret
+Time_calculations ENDP
 END main
